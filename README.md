@@ -8,7 +8,7 @@
 
 1. 装 ARM 工具链：`brew install --cask gcc-arm-embedded`（或 developer.arm.com 官方 pkg）
 2. VS Code 扩展：C/C++、CMake Tools、Cortex-Debug
-3. 本目录执行 `./build.sh` → 产物 `build/firmware.bin`，脚本尾部自动做 bin 头 8 字节自检
+3. 本目录执行 `./build.sh` → 产物 `build/dl1824.bin`，脚本尾部自动做 bin 头 8 字节自检
 
 ## 当前状态
 

@@ -80,7 +80,7 @@ chmod +x build.sh   # 只需一次：从 GitHub 拉下来的 build.sh 可能没�
 ./build.sh
 ```
 
-看到 `build/firmware.bin` 生成、且末尾自检通过（见第二节第 3 条），环境即搭建完成。
+看到 `build/dl1824.bin` 生成、且末尾自检通过（见第二节第 3 条），环境即搭建完成。
 **本机已于 2026-11-10 实测通过。**
 
 ### 5.（可选，暂缓）STM32CubeIDE / STM32CubeProgrammer
@@ -103,7 +103,7 @@ cd ~/Documents/JUNTONG/JT_ZG_10_1824controller
 
 | 文件 | 说明 |
 |---|---|
-| `firmware.bin` | **最终交付物**：裸 bin，基址 0x08010000，将来走原厂 bootloader 刷入 |
+| `dl1824.bin` | **最终交付物**：裸 bin，基址 0x08010000，将来走原厂 bootloader 刷入 |
 | `firmware`（.elf） | 带调试符号的可执行文件，ST-Link 调试时用 |
 | `firmware.map` | 链接映射表，查每个函数/变量的地址时看它 |
 
@@ -117,7 +117,7 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake
 cmake --build build
 
 # 第 3 步 生成 bin 与看体积（已写在 CMakeLists 的 POST_BUILD 里，编译时自动执行）
-arm-none-eabi-objcopy -O binary build/firmware build/firmware.bin
+arm-none-eabi-objcopy -O binary build/firmware build/dl1824.bin
 arm-none-eabi-size build/firmware
 ```
 
@@ -129,7 +129,7 @@ VS Code 图形操作与上面等价：打开工程文件夹 → 左侧 CMake 面
 build.sh 末尾会自动打印 bin 头 8 字节，逐项核对：
 
 ```bash
-xxd -l 8 build/firmware.bin
+xxd -l 8 build/dl1824.bin
 # 本机模板实测：00000000: 0000 0220 cd04 0108
 ```
 
