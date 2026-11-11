@@ -310,6 +310,11 @@ int main(void)
     gpio_output(GPIOA_BASE, 15);   /* v2：PA15 置高——原厂有专用置高封装、上电即高，
                                       疑为模拟前端使能/选通；v1 未驱动它，疑致 AI 全路不通 */
     BSRR(GPIOA_BASE) = (1u << 15);
+    /* v3：补齐 12 路模拟脚为模拟模式（与诊断/演示固件一致，含 PC2） */
+    gpio_analog(GPIOA_BASE, 4); gpio_analog(GPIOA_BASE, 5);
+    gpio_analog(GPIOA_BASE, 6); gpio_analog(GPIOA_BASE, 7);
+    gpio_analog(GPIOB_BASE, 0); gpio_analog(GPIOB_BASE, 1);
+    for (uint8_t pp = 0; pp <= 5; pp++) gpio_analog(GPIOC_BASE, pp);
     {
         uint32_t v = MODER(GPIOA_BASE);   /* PA12 输出（心跳灯） */
         v &= ~(3u << 24); v |= (1u << 24);
