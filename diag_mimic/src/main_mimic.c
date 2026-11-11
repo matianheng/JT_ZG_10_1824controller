@@ -137,6 +137,23 @@ static void delay_us(uint32_t us)
     STK_LOAD = 16000u - 1u;
 }
 
+/* 时钟归一化：Bootloader 跳转时可能留下 PLL 高速时钟树（原厂运行频率），
+   本固件的 SysTick/CAN/ADC 时序常数全部按 HSI 16MHz 基准。上电先切回
+   HSI 并关 PLL、清 APB 预分频，保证时序与常数一致（带超时，不挂死）。 */
+#define RCC_CR   REG32(0x40023800u)
+#define RCC_CFGR REG32(0x40023808u)
+static void clock_force_hsi16(void)
+{
+    uint32_t guard = 100000u;
+    RCC_CR |= (1u << 0);                                  /* HSION */
+    while ((RCC_CR & (1u << 1)) == 0 && guard--) { }      /* 等 HSIRDY */
+    RCC_CFGR &= ~3u;                                      /* SW = HSI */
+    guard = 100000u;
+    while ((RCC_CFGR & (3u << 2)) != 0 && guard--) { }    /* 等 SWS = HSI */
+    RCC_CR &= ~(1u << 24);                                /* 关 PLL */
+    RCC_CFGR &= ~((7u << 10) | (7u << 13));               /* APB1/APB2 不分频 */
+}
+
 static void gpio_output(uint32_t base, uint8_t pin)
 {
     uint32_t v = MODER(base);
@@ -269,6 +286,7 @@ static Sweep sweep_all(void)
 
 int main(void)
 {
+    clock_force_hsi16();       /* 先归一化时钟到 HSI 16MHz */
     RCC_AHB1ENR |= 0x1Fu;  /* GPIOA-E 时钟 */
     RCC_APB2ENR |= (1u << 8) | (1u << 9) | (1u << 10);  /* ADC1/2/3 */
     /* 45 个扫描输出脚：推挽输出、初始低 */
