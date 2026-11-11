@@ -240,7 +240,11 @@ static int can_send(uint16_t id, const uint8_t d[8])
 int main(void)
 {
     clock_force_hsi16();
-    systick_init();
+    RCC_AHB1ENR |= 0x1Fu;  /* GPIOA-E 时钟（v1.1 补上：漏开则输出配置全部不生效） */
+    /* SysTick：1ms 节拍基准（与 demo 固件同款内联初始化） */
+    STK_LOAD = 16000u - 1u;  /* 1ms @16MHz */
+    STK_VAL = 0;
+    STK_CTRL = (1u << 2) | 1u;  /* CLKSOURCE=内核, ENABLE, 不开中断 */
 
     const unsigned n = (unsigned)(sizeof(kPins) / sizeof(kPins[0]));
     for (unsigned i = 0; i < n; i++) {
