@@ -191,8 +191,8 @@ static void adc_init(void)
     const uint32_t adcs[3] = {ADC1_BASE, ADC2_BASE, ADC3_BASE};
     for (int i = 0; i < 3; i++) {
         uint32_t b = adcs[i];
-        ADC_SMPR1(b) = 0x24924924u;  /* 通道10-17 采样=56周期(码3) 近似铺满 */
-        ADC_SMPR2(b) = 0x24924924u;  /* 通道0-9 同上 */
+        ADC_SMPR1(b) = 0xFFFFFFFFu;  /* 通道10-17 采样=480周期(码7) 拉满，排除高阻前端采样不足 */
+        ADC_SMPR2(b) = 0xFFFFFFFFu;  /* 通道0-9 同上 */
         ADC_SQR1(b) = 0;             /* 序列长度 1 */
         ADC_CR2(b) |= 1u;            /* ADON */
     }
@@ -201,13 +201,18 @@ static void adc_init(void)
 /* 带超时：EOC 等不到就放弃并返回 0，绝不挂死主循环 */
 static uint16_t adc_read(uint32_t base, uint8_t ch)
 {
-    uint32_t guard = WAIT_LIMIT;
-    ADC_SQR3(base) = ch;
-    ADC_CR2(base) |= (1u << 30);  /* SWSTART */
-    while ((ADC_SR(base) & (1u << 1)) == 0) {  /* EOC */
-        if (--guard == 0) return 0;
+    /* 每通道连转两次、弃第一次：消除通道切换后的采样电容残留（鬼影） */
+    uint16_t v = 0;
+    for (int k = 0; k < 2; k++) {
+        uint32_t guard = WAIT_LIMIT;
+        ADC_SQR3(base) = ch;
+        ADC_CR2(base) |= (1u << 30);  /* SWSTART */
+        while ((ADC_SR(base) & (1u << 1)) == 0) {  /* EOC */
+            if (--guard == 0) return 0;
+        }
+        v = (uint16_t)(ADC_DR(base) & 0xFFFu);
     }
-    return (uint16_t)(ADC_DR(base) & 0xFFFu);
+    return v;
 }
 
 static void can_init_250k(void)
@@ -272,7 +277,7 @@ static Sweep sweep_all(void)
     s.max = 0; s.slot = 0; s.code = 0; s.over = 0;
     for (uint8_t slot = 0; slot < 8; slot++) {
         mux_select(slot);
-        delay_us(100);  /* 多路复用切换稳定时间 */
+        delay_us(1000);  /* 多路复用切换稳定时间（v4 拉长到 1ms） */
         for (unsigned i = 0; i < NCH; i++) {
             uint16_t v = adc_read(kChans[i].adc, kChans[i].ch);
             g_raw[slot][i] = v;
