@@ -296,13 +296,19 @@ static int can_poll_cmd(void)
     return (b >= 0) ? b : a;
 }
 
-/* 演示输入（原始计数）-> 档位 0..7（满量程 1600 计数，待标定） */
-static const uint32_t kRates[8] = {0u, 1u, 2u, 3u, 4u, 6u, 9u, 13u};  /* Hz：档0=长亮不闪（0V），档1~7 电压越高越快 */
-static uint8_t band_of(uint16_t raw)
+/* 演示律（v5，用户定版）：PWM 持续输出，频率由 AI 电压连续控制——
+   0V -> 频率 0（长亮不闪）；电压越高频率越高，24V -> FREQ_MAX。
+   RAW_AT_24V = AI 24V 对应的原始计数（暂按近满量程 4000，待标定后改准） */
+#define RAW_AT_24V 4000u
+#define RAW_ZERO   40u     /* 小于此值视为 0V */
+#define FREQ_MAX   20u     /* Hz @24V */
+static uint32_t freq_of(uint16_t raw)
 {
-    uint32_t b = ((uint32_t)raw * 8u) / 1600u;
-    if (b > 7u) b = 7u;
-    return (uint8_t)b;
+    if (raw <= RAW_ZERO) return 0;
+    uint32_t f = ((uint32_t)(raw - RAW_ZERO) * FREQ_MAX) / (RAW_AT_24V - RAW_ZERO);
+    if (f > FREQ_MAX) f = FREQ_MAX;
+    if (f == 0u) f = 1u;
+    return f;
 }
 
 typedef struct {
@@ -312,6 +318,7 @@ typedef struct {
     uint16_t over;         /* 本轮 >= THRESH_RAW 的读数个数 */
 } Sweep;
 static uint16_t g_raw[8][NCH];  /* 全部 8 槽 × 12 路原始值矩阵（供 0x7A2 轮发） */
+
 static Sweep sweep_all(void)
 {
     Sweep s;
@@ -377,12 +384,12 @@ int main(void)
 #endif
     uint8_t  lamp_idx = (LAMP_DEFAULT_STEP > 0) ? (uint8_t)(LAMP_DEFAULT_STEP - 1) : 0;  /* 演示灯的步下标（步号-1） */
     uint16_t demo_raw = 0;          /* 演示输入原始值 =（槽0,PC2） */
-    uint8_t  demo_band = 0;         /* 当前档位 0..7 */
+    uint8_t  demo_freq = 0;         /* 当前档位 0..7 */
     uint32_t last_sweep = 0;
     Sweep s; s.max = 0; s.slot = 0; s.code = 0; s.over = 0;
 
     for (;;) {
-        if (!mode_demo || ms - last_sweep >= 500u) {  /* 演示模式下采样降为 500ms 一轮，给闪烁留时间粒度 */
+        if (!mode_demo || ms - last_sweep >= 200u) {  /* 演示模式下采样 200ms 一轮，兼顾跟随与闪烁粒度 */
             s = sweep_all();
             last_sweep = ms;
         }
@@ -408,7 +415,7 @@ int main(void)
                 } else {
                     lamp_idx = (uint8_t)(cmd - 1); mode_demo = 1; all_write(0);
                 }
-                uint8_t ack[8] = { (uint8_t)cmd, demo_band, 4u, 0, 0, 0, 0, 0 };  /* 0x7A3 应答：字节0=命令，字节2=固件版本4 */
+                uint8_t ack[8] = { (uint8_t)cmd, (uint8_t)demo_freq, 5u, 0, 0, 0, 0, 0 };  /* 0x7A3 应答：字节0=命令，字节1=当前频率Hz，字节2=固件版本（v5 起为 5） */
                 (void)can_send(0x7A3u, ack);
             }
         }
@@ -417,15 +424,15 @@ int main(void)
         uint8_t step_disp = 0;
         if (mode_demo) {
             demo_raw = g_raw[0][9];              /* （槽0,PC2)：序号 9 = PC2 */
-            demo_band = band_of(demo_raw);
-            if (demo_band == 0u) {
-                pin_write(&kPins[lamp_idx], 1);  /* 0V：长亮不闪 */
+            demo_freq = freq_of(demo_raw);
+            if (demo_freq == 0u) {
+                pin_write(&kPins[lamp_idx], 1);  /* 0V：长亮不闪（频率 0） */
             } else {
-                uint32_t period = 1000u / kRates[demo_band];
+                uint32_t period = 1000u / demo_freq;
                 uint32_t ph2 = ms % period;
-                pin_write(&kPins[lamp_idx], ph2 < (period / 2u));
+                pin_write(&kPins[lamp_idx], ph2 < (period / 2u));  /* PWM 50% 占空 */
             }
-            step_disp = (uint8_t)(0xD0u | demo_band);
+            step_disp = (uint8_t)demo_freq;      /* 演示模式字节5 = 当前频率 Hz（0=长亮） */
         } else if (in_marker) {
             uint32_t ph = (ms - marker_t) / 150u;  /* 每 150ms 一相 */
             if (ph >= 6u) {                        /* 3 闪结束 */
