@@ -279,7 +279,8 @@ static int can_send(uint16_t id, const uint8_t d[8])
 static int fifo_poll(uint32_t rf, uint32_t ri, uint32_t rdt, uint32_t rdl)
 {
     int cmd = -1;
-    while ((REG32(rf) & 3u) != 0) {
+    int guard = 8;  /* v6 硬上限：FIFO 异常时最多释放 8 帧，绝不挂死主循环 */
+    while ((REG32(rf) & 3u) != 0 && guard-- > 0) {
         uint32_t rir = REG32(ri);
         uint32_t dlc = REG32(rdt) & 0xFu;
         uint32_t lo  = REG32(rdl);
@@ -415,7 +416,7 @@ int main(void)
                 } else {
                     lamp_idx = (uint8_t)(cmd - 1); mode_demo = 1; all_write(0);
                 }
-                uint8_t ack[8] = { (uint8_t)cmd, (uint8_t)demo_freq, 5u, 0, 0, 0, 0, 0 };  /* 0x7A3 应答：字节0=命令，字节1=当前频率Hz，字节2=固件版本（v5 起为 5） */
+                uint8_t ack[8] = { (uint8_t)cmd, (uint8_t)demo_freq, 6u, 0, 0, 0, 0, 0 };  /* 0x7A3 应答：字节0=命令，字节1=当前频率Hz，字节2=固件版本（v6 起为 6） */
                 (void)can_send(0x7A3u, ack);
             }
         }
