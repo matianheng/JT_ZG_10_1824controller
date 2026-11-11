@@ -270,31 +270,20 @@ static int can_send(uint16_t id, const uint8_t d[8])
 #define CAN_RI0R  REG32(0x400065B0u)
 #define CAN_RDT0R REG32(0x400065B4u)
 #define CAN_RDL0R REG32(0x400065B8u)
-/* 取走双 FIFO 全部待处理帧，返回最后一个 0x7FF 命令的字节0；无命令返回 -1。
-   v4 加固：FIFO0/FIFO1 都查；标准帧与扩展帧（工具误发扩展帧）都认。 */
-#define CAN_RF1R  REG32(0x4000641Cu)
-#define CAN_RI1R  REG32(0x400065C0u)
-#define CAN_RDT1R REG32(0x400065C4u)
-#define CAN_RDL1R REG32(0x400065C8u)
-static int fifo_poll(uint32_t rf, uint32_t ri, uint32_t rdt, uint32_t rdl)
-{
-    int cmd = -1;
-    int guard = 8;  /* v6 硬上限：FIFO 异常时最多释放 8 帧，绝不挂死主循环 */
-    while ((REG32(rf) & 3u) != 0 && guard-- > 0) {
-        uint32_t rir = REG32(ri);
-        uint32_t dlc = REG32(rdt) & 0xFu;
-        uint32_t lo  = REG32(rdl);
-        uint32_t id  = (rir & (1u << 2)) ? (rir >> 3) : (rir >> 21);  /* IDE: 扩展/标准 */
-        if ((id & 0x7FFu) == ID_CMD && (rir & (1u << 1)) == 0 && dlc >= 1u) cmd = (int)(lo & 0xFFu);
-        REG32(rf) |= (1u << 5);               /* RFOM：释放一帧 */
-    }
-    return cmd;
-}
+/* 取走 FIFO0 待处理帧，返回最后一个 0x7FF 命令的字节0；无命令返回 -1。
+   v7：退回 v1~v3 台架实证过的简单版（FIFO0 + 标准帧），保留 8 帧硬上限。 */
 static int can_poll_cmd(void)
 {
-    int a = fifo_poll(0x4000640Cu, 0x400065B0u, 0x400065B4u, 0x400065B8u);
-    int b = fifo_poll(0x4000641Cu, 0x400065C0u, 0x400065C4u, 0x400065C8u);
-    return (b >= 0) ? b : a;
+    int cmd = -1;
+    int guard = 8;
+    while ((CAN_RF0R & 3u) != 0 && guard-- > 0) {   /* FMP0 > 0 */
+        uint32_t id  = (CAN_RI0R >> 21) & 0x7FFu;
+        uint32_t dlc = CAN_RDT0R & 0xFu;
+        uint32_t lo  = CAN_RDL0R;
+        if (id == ID_CMD && dlc >= 1u) cmd = (int)(lo & 0xFFu);
+        CAN_RF0R |= (1u << 5);                /* RFOM0：释放一帧 */
+    }
+    return cmd;
 }
 
 /* 演示律（v5，用户定版）：PWM 持续输出，频率由 AI 电压连续控制——
@@ -416,7 +405,7 @@ int main(void)
                 } else {
                     lamp_idx = (uint8_t)(cmd - 1); mode_demo = 1; all_write(0);
                 }
-                uint8_t ack[8] = { (uint8_t)cmd, (uint8_t)demo_freq, 6u, 0, 0, 0, 0, 0 };  /* 0x7A3 应答：字节0=命令，字节1=当前频率Hz，字节2=固件版本（v6 起为 6） */
+                uint8_t ack[8] = { (uint8_t)cmd, (uint8_t)demo_freq, 7u, 0, 0, 0, 0, 0 };  /* 0x7A3 应答：字节0=命令，字节1=当前频率Hz，字节2=固件版本（v7 起为 7） */
                 (void)can_send(0x7A3u, ack);
             }
         }
