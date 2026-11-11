@@ -307,6 +307,9 @@ int main(void)
         pin_write(&kPins[i], 1);          /* 先全置高（长亮起点） */
     }
     gpio_output(GPIOE_BASE, 12); gpio_output(GPIOE_BASE, 13); gpio_output(GPIOE_BASE, 14);  /* 复用选通脚 */
+    gpio_output(GPIOA_BASE, 15);   /* v2：PA15 置高——原厂有专用置高封装、上电即高，
+                                      疑为模拟前端使能/选通；v1 未驱动它，疑致 AI 全路不通 */
+    BSRR(GPIOA_BASE) = (1u << 15);
     {
         uint32_t v = MODER(GPIOA_BASE);   /* PA12 输出（心跳灯） */
         v &= ~(3u << 24); v |= (1u << 24);
