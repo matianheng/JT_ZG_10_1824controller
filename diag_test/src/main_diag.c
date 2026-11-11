@@ -278,6 +278,12 @@ int main(void)
     gpio_analog(GPIOA_BASE, 6); gpio_analog(GPIOA_BASE, 7);
     gpio_analog(GPIOB_BASE, 0); gpio_analog(GPIOB_BASE, 1);
     for (uint8_t p = 0; p <= 5; p++) gpio_analog(GPIOC_BASE, p);
+    /* v2: PA15 置高保持（原厂对 PA15 有专用置位封装、初始为高，疑输出级使能）；
+       PA12 作心跳（原厂有专用翻转封装，疑运行灯），主循环里每 500ms 翻转 */
+    gpio_output(GPIOA_BASE, 15);
+    BSRR(GPIOA_BASE) = (1u << 15);
+    gpio_output(GPIOA_BASE, 12);
+    BSRR(GPIOA_BASE) = (1u << (12 + 16));
     /* SysTick：1ms 节拍基准 */
     STK_LOAD = 16000u - 1u;  /* 1ms @16MHz */
     STK_VAL = 0;
@@ -364,6 +370,7 @@ int main(void)
             }
         }
 
+        if ((ms % 500u) == 0u) { ODR(GPIOA_BASE) ^= (1u << 12); }  /* v2 心跳 */
         delay_ms(50);             /* 主循环节拍 50ms */
         ms += 50u;
     }
