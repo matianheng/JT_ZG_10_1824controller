@@ -283,7 +283,7 @@ static int can_poll_cmd(void)
     return cmd;
 }
 /* 演示输入（原始计数）-> 档位 0..7（满量程 1600 计数，待标定） */
-static const uint32_t kRates[8] = {1u, 2u, 3u, 4u, 5u, 6u, 8u, 10u};  /* Hz */
+static const uint32_t kRates[8] = {2u, 3u, 4u, 6u, 8u, 10u, 13u, 16u};  /* Hz（v2 整体提速：最低 2Hz 起步） */
 static uint8_t band_of(uint16_t raw)
 {
     uint32_t b = ((uint32_t)raw * 8u) / 1600u;
@@ -476,7 +476,7 @@ int main(void)
                 BSRR(GPIOA_BASE) = (1u << (12 + 16));   /* PA12 拉低（灭） */
             }
         }
-        { uint32_t tick = mode_demo ? 10u : 50u;   /* 演示模式细化节拍以渲染高频闪烁 */
+        { uint32_t tick = mode_demo ? 5u : 50u;   /* 演示模式细化节拍以渲染高频闪烁 */
           delay_ms(tick);
           ms += tick; }
     }
