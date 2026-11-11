@@ -283,7 +283,7 @@ static int can_poll_cmd(void)
     return cmd;
 }
 /* 演示输入（原始计数）-> 档位 0..7（满量程 1600 计数，待标定） */
-static const uint32_t kRates[8] = {2u, 3u, 4u, 6u, 8u, 10u, 13u, 16u};  /* Hz（v2 整体提速：最低 2Hz 起步） */
+static const uint32_t kRates[8] = {0u, 1u, 2u, 3u, 4u, 6u, 9u, 13u};  /* Hz：档0=长亮不闪（0V），档1~7 电压越高越快 */
 static uint8_t band_of(uint16_t raw)
 {
     uint32_t b = ((uint32_t)raw * 8u) / 1600u;
@@ -397,9 +397,13 @@ int main(void)
         if (mode_demo) {
             demo_raw = g_raw[0][9];              /* （槽0,PC2)：序号 9 = PC2 */
             demo_band = band_of(demo_raw);
-            uint32_t period = 1000u / kRates[demo_band];
-            uint32_t ph2 = ms % period;
-            pin_write(&kPins[lamp_idx], ph2 < (period / 2u));
+            if (demo_band == 0u) {
+                pin_write(&kPins[lamp_idx], 1);  /* 0V：长亮不闪 */
+            } else {
+                uint32_t period = 1000u / kRates[demo_band];
+                uint32_t ph2 = ms % period;
+                pin_write(&kPins[lamp_idx], ph2 < (period / 2u));
+            }
             step_disp = (uint8_t)(0xD0u | demo_band);
         } else if (in_marker) {
             uint32_t ph = (ms - marker_t) / 150u;  /* 每 150ms 一相 */
