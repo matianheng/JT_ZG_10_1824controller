@@ -264,24 +264,38 @@ static int can_send(uint16_t id, const uint8_t d[8])
     return 1;
 }
 
+#define LAMP_DEFAULT_STEP 0   /* 0=上电轮扫；填步号(1~45)=上电直进演示 */
 #define ID_CMD       0x7FFu     /* 命令帧：字节0=步号(1~45)进演示，0=回轮扫 */
 #define CAN_RF0R  REG32(0x4000640Cu)
 #define CAN_RI0R  REG32(0x400065B0u)
 #define CAN_RDT0R REG32(0x400065B4u)
 #define CAN_RDL0R REG32(0x400065B8u)
-/* 取走 FIFO0 全部待处理帧，返回最后一个 0x7FF 命令的字节0；无命令返回 -1 */
-static int can_poll_cmd(void)
+/* 取走双 FIFO 全部待处理帧，返回最后一个 0x7FF 命令的字节0；无命令返回 -1。
+   v4 加固：FIFO0/FIFO1 都查；标准帧与扩展帧（工具误发扩展帧）都认。 */
+#define CAN_RF1R  REG32(0x4000641Cu)
+#define CAN_RI1R  REG32(0x400065C0u)
+#define CAN_RDT1R REG32(0x400065C4u)
+#define CAN_RDL1R REG32(0x400065C8u)
+static int fifo_poll(uint32_t rf, uint32_t ri, uint32_t rdt, uint32_t rdl)
 {
     int cmd = -1;
-    while ((CAN_RF0R & 3u) != 0) {            /* FMP0 > 0 */
-        uint32_t id  = (CAN_RI0R >> 21) & 0x7FFu;
-        uint32_t dlc = CAN_RDT0R & 0xFu;
-        uint32_t lo  = CAN_RDL0R;
-        if (id == ID_CMD && dlc >= 1u) cmd = (int)(lo & 0xFFu);
-        CAN_RF0R |= (1u << 5);                /* RFOM0：释放一帧 */
+    while ((REG32(rf) & 3u) != 0) {
+        uint32_t rir = REG32(ri);
+        uint32_t dlc = REG32(rdt) & 0xFu;
+        uint32_t lo  = REG32(rdl);
+        uint32_t id  = (rir & (1u << 2)) ? (rir >> 3) : (rir >> 21);  /* IDE: 扩展/标准 */
+        if ((id & 0x7FFu) == ID_CMD && (rir & (1u << 1)) == 0 && dlc >= 1u) cmd = (int)(lo & 0xFFu);
+        REG32(rf) |= (1u << 5);               /* RFOM：释放一帧 */
     }
     return cmd;
 }
+static int can_poll_cmd(void)
+{
+    int a = fifo_poll(0x4000640Cu, 0x400065B0u, 0x400065B4u, 0x400065B8u);
+    int b = fifo_poll(0x4000641Cu, 0x400065C0u, 0x400065C4u, 0x400065C8u);
+    return (b >= 0) ? b : a;
+}
+
 /* 演示输入（原始计数）-> 档位 0..7（满量程 1600 计数，待标定） */
 static const uint32_t kRates[8] = {0u, 1u, 2u, 3u, 4u, 6u, 9u, 13u};  /* Hz：档0=长亮不闪（0V），档1~7 电压越高越快 */
 static uint8_t band_of(uint16_t raw)
@@ -358,7 +372,10 @@ int main(void)
     uint32_t step_t = 0;
     /* 演示模式状态 */
     uint8_t  mode_demo = 0;
-    uint8_t  lamp_idx = 0;          /* 演示灯的步下标（步号-1） */
+#if LAMP_DEFAULT_STEP > 0
+    mode_demo = 1;                          /* 上电直进演示（步号写死版） */
+#endif
+    uint8_t  lamp_idx = (LAMP_DEFAULT_STEP > 0) ? (uint8_t)(LAMP_DEFAULT_STEP - 1) : 0;  /* 演示灯的步下标（步号-1） */
     uint16_t demo_raw = 0;          /* 演示输入原始值 =（槽0,PC2） */
     uint8_t  demo_band = 0;         /* 当前档位 0..7 */
     uint32_t last_sweep = 0;
@@ -385,10 +402,14 @@ int main(void)
         /* 命令帧轮询：0x7FF 字节0=1~45 进演示（该步引脚为灯），0=回轮扫 */
         {
             int cmd = can_poll_cmd();
-            if (cmd == 0) {
-                mode_demo = 0; in_marker = 1; marker_t = ms; marker_phase = 0xFFu; all_write(0);
-            } else if (cmd >= 1 && cmd <= 45) {
-                lamp_idx = (uint8_t)(cmd - 1); mode_demo = 1; all_write(0);
+            if (cmd == 0 || (cmd >= 1 && cmd <= 45)) {
+                if (cmd == 0) {
+                    mode_demo = 0; in_marker = 1; marker_t = ms; marker_phase = 0xFFu; all_write(0);
+                } else {
+                    lamp_idx = (uint8_t)(cmd - 1); mode_demo = 1; all_write(0);
+                }
+                uint8_t ack[8] = { (uint8_t)cmd, demo_band, 4u, 0, 0, 0, 0, 0 };  /* 0x7A3 应答：字节0=命令，字节2=固件版本4 */
+                (void)can_send(0x7A3u, ack);
             }
         }
 
