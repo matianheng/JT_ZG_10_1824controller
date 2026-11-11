@@ -151,7 +151,6 @@ static void can_init_250k(void)
     v &= ~((3u << 0) | (3u << 2));
     v |= ((2u << 0) | (2u << 2));
     MODER(GPIOD_BASE) = v;
-    AFRH(GPIOD_BASE) &= ~0xFFu;  /* 注：PD0/PD1 在 AFRL，见下行 */
     AFRL(GPIOD_BASE) = (AFRL(GPIOD_BASE) & ~0xFFu) | 0x99u;
     RCC_APB1ENR |= (1u << 25);  /* CAN1 时钟 */
     CAN_MCR |= 1u;  /* INRQ 进初始化 */
