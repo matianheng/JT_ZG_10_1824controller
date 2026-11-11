@@ -264,19 +264,18 @@ typedef struct {
     uint8_t  slot;         /* 最大值所在槽 */
     uint8_t  code;         /* 最大值所在通道编码 */
     uint16_t over;         /* 本轮 >= THRESH_RAW 的读数个数 */
-    uint16_t raw0[NCH];    /* 槽 0 时 12 路通道原始值（供 0x7A2） */
 } Sweep;
+static uint16_t g_raw[8][NCH];  /* 全部 8 槽 × 12 路原始值矩阵（供 0x7A2 轮发） */
 static Sweep sweep_all(void)
 {
     Sweep s;
     s.max = 0; s.slot = 0; s.code = 0; s.over = 0;
-    for (unsigned i = 0; i < NCH; i++) s.raw0[i] = 0;
     for (uint8_t slot = 0; slot < 8; slot++) {
         mux_select(slot);
         delay_us(100);  /* 多路复用切换稳定时间 */
         for (unsigned i = 0; i < NCH; i++) {
             uint16_t v = adc_read(kChans[i].adc, kChans[i].ch);
-            if (slot == 0) s.raw0[i] = v;
+            g_raw[slot][i] = v;
             if (v > s.max) { s.max = v; s.slot = slot; s.code = kChans[i].code; }
             if (v >= THRESH_RAW) s.over++;
         }
@@ -366,6 +365,13 @@ int main(void)
         }
         uint8_t step_disp = in_marker ? 0u : (uint8_t)(step + 1u);  /* 0=标记阶段，1..45=步号 */
 
+        /* CAN 总线关闭（Bus-Off）自恢复：工具插拔期间无 ACK 会把发送端
+           打到 Bus-Off 且默认不自动恢复，此处检测到就重初始化 */
+        if ((REG32(0x40006418u) & (1u << 2)) != 0) {  /* CAN_ESR.BOFF */
+            can_init_250k();
+        }
+        REG32(0x40003000u) = 0xAAAAu;  /* 喂独立看门狗：Bootloader 若开了 IWDG 不喂必复位，未开则无副作用 */
+
         /* (a) 状态帧 0x7A0：每 250ms 无条件发送 */
         if (ms - last_status >= 250u) {
             last_status = ms;
@@ -378,20 +384,23 @@ int main(void)
             (void)can_send(ID_STATUS, d);
         }
 
-        /* (c) 原始值组帧 0x7A2：每秒一组 4 帧，装槽 0 的 12 路原始值 */
+        /* (c) 原始值组帧 0x7A2：每秒一组 4 帧，轮流发一个槽的 12 路原始值，
+           8 秒发完全部 8 个槽；字节 6 高半字节=槽号、低半字节=帧序号 */
         if (ms - last_rawgrp >= 1000u) {
+            static uint8_t dump_slot = 0;
             last_rawgrp = ms;
             for (uint8_t f = 0; f < 4; f++) {
                 uint8_t d[8];
                 for (uint8_t k = 0; k < 3; k++) {
-                    uint16_t v = s.raw0[f * 3u + k];
+                    uint16_t v = g_raw[dump_slot][f * 3u + k];
                     d[k * 2u] = (uint8_t)(v & 0xFF);
                     d[k * 2u + 1u] = (uint8_t)(v >> 8);
                 }
-                d[6] = f;         /* 帧序号 0..3 */
+                d[6] = (uint8_t)((dump_slot << 4) | f);
                 d[7] = counter++; /* 与其它帧共用滚动计数，便于对齐时间 */
                 (void)can_send(ID_RAWGROUP, d);
             }
+            dump_slot = (uint8_t)((dump_slot + 1u) & 7u);
         }
 
         /* mimic: PA12 双闪节律（周期 2000ms：0-100ms 亮、100-200ms 灭、
