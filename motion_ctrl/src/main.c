@@ -1,4 +1,12 @@
-/* motion_ctrl v2 — 鼎立 DL-IO1824G 原厂逻辑版（已推仓库）
+/* motion_ctrl v2.1 — 鼎立 DL-IO1824G 原厂逻辑版（v2 + 全输出显式置低）
+ *
+ * v2.1 相对 v2 的唯一行为变化：45 个 DO 脚每轮先全部置低，再按逻辑写
+ * 5 个阀——其余 40 脚（卷扬/配重/推杆/油冷/空调/蜂鸣器等）不再悬空，
+ * 排除“未驱动脚默认导通、把先导油偷走”这一干扰。针对 2026-11-12 实车
+ * 现象：伸缩模式下手柄左推走副钩卷扬、伸缩不动（2.asc），而原厂同操作
+ * 伸缩正常（2-2.asc，臂长 12.88→15.86→11.39m）。若 v2.1 伸缩仍不动，
+ * 则伸缩阀 GPIO 脚认定（PC13/PB6）有误，用 tele_hunt 找真脚（见
+ * tele_hunt/README.md），勿再猜脚。
  *
  * 一句话行为：v1.1 的 5 阀动作逻辑按文件 03 字面执行（主令只门控主控阀
  * J1-2；变幅/伸缩阀按模式常通，先导选方向；过卷 0x192 或超时切断落幅
@@ -205,6 +213,24 @@ static const Pin kValveLuffDn = {GPIOD_BASE, 3};   /* J1-5  落幅阀  步28 PD3
 static const Pin kValveTeleEx = {GPIOC_BASE, 13};  /* J1-18 伸臂阀  步24 PC13 */
 static const Pin kValveTeleRe = {GPIOB_BASE, 6};   /* J1-21 缩臂阀  步12 PB6  */
 
+/* ---- 全部 45 个 DO 候选脚（同 diag_mimic 的 kPins；v2.1 起全部显式置低，
+      只留 5 个阀按逻辑驱动，杜绝未驱动脚悬空默认导通干扰） ---- */
+static const Pin kPins[] = {
+    /*  1- 8 */ {GPIOA_BASE,0},{GPIOA_BASE,1},{GPIOA_BASE,2},{GPIOA_BASE,3},
+                {GPIOA_BASE,8},{GPIOA_BASE,9},{GPIOA_BASE,10},{GPIOA_BASE,11},
+    /*  9-19 */ {GPIOB_BASE,3},{GPIOB_BASE,4},{GPIOB_BASE,5},{GPIOB_BASE,6},
+                {GPIOB_BASE,7},{GPIOB_BASE,8},{GPIOB_BASE,9},{GPIOB_BASE,10},
+                {GPIOB_BASE,11},{GPIOB_BASE,14},{GPIOB_BASE,15},
+    /* 20-26 */ {GPIOC_BASE,6},{GPIOC_BASE,7},{GPIOC_BASE,8},{GPIOC_BASE,9},
+                {GPIOC_BASE,13},{GPIOC_BASE,14},{GPIOC_BASE,15},
+    /* 27-38 */ {GPIOD_BASE,2},{GPIOD_BASE,3},{GPIOD_BASE,4},{GPIOD_BASE,5},
+                {GPIOD_BASE,6},{GPIOD_BASE,7},{GPIOD_BASE,10},{GPIOD_BASE,11},
+                {GPIOD_BASE,12},{GPIOD_BASE,13},{GPIOD_BASE,14},{GPIOD_BASE,15},
+    /* 39-45 */ {GPIOE_BASE,0},{GPIOE_BASE,1},{GPIOE_BASE,2},{GPIOE_BASE,3},
+                {GPIOE_BASE,4},{GPIOE_BASE,7},{GPIOE_BASE,15},
+};
+#define PIN_COUNT (sizeof(kPins) / sizeof(kPins[0]))
+
 /* PE12-14 选槽编码：槽号 3 位比特反序（已从原厂固件解码定案） */
 static const uint8_t kMuxCode[8] = {0, 4, 2, 6, 1, 5, 3, 7};
 
@@ -296,6 +322,11 @@ static void gpio_analog(uint32_t base, uint8_t pin)
 static void pin_write(const Pin *p, int on)
 {
     BSRR(p->base) = on ? (1u << p->pin) : (1u << (p->pin + 16u));
+}
+/* 全部 DO 脚置低（5 个阀随后按逻辑重写，其余 40 脚保持低电平） */
+static void all_outputs_low(void)
+{
+    for (unsigned i = 0; i < PIN_COUNT; i++) pin_write(&kPins[i], 0);
 }
 
 static void mux_select(uint8_t slot)
@@ -617,6 +648,11 @@ int main(void)
     gpio_output(kValveLuffDn.base, kValveLuffDn.pin); pin_write(&kValveLuffDn, 0);
     gpio_output(kValveTeleEx.base, kValveTeleEx.pin); pin_write(&kValveTeleEx, 0);
     gpio_output(kValveTeleRe.base, kValveTeleRe.pin); pin_write(&kValveTeleRe, 0);
+    /* v2.1：其余 40 个 DO 脚也配成输出并置低（不悬空），随后每轮重申 */
+    for (unsigned i = 0; i < PIN_COUNT; i++) {
+        gpio_output(kPins[i].base, kPins[i].pin);
+        pin_write(&kPins[i], 0);
+    }
     gpio_output(GPIOE_BASE, 12); gpio_output(GPIOE_BASE, 13); gpio_output(GPIOE_BASE, 14);  /* 复用选通脚 */
     gpio_output(GPIOA_BASE, 15);   /* PA15 置高（原厂上电即高；freq_demo v2/v3 同款） */
     BSRR(GPIOA_BASE) = (1u << 15);
@@ -715,6 +751,7 @@ int main(void)
         g_io_b0 = (uint8_t)(0x80u | (master_on ? 1u : 0u));
         g_io_b4 = (uint8_t)(0x04u | (master_on ? 1u : 0u) | (telesc ? (1u << 4) : 0u));
         if (di_ready) {
+            all_outputs_low();  /* v2.1：先把 45 脚全置低，再按逻辑写 5 个阀 */
             pin_write(&kValveMaster, master_on);
             pin_write(&kValveLuffUp, !telesc);
             pin_write(&kValveLuffDn, !telesc && !cut_dn_ex);
@@ -722,6 +759,7 @@ int main(void)
             pin_write(&kValveTeleRe, telesc);
         } else {
             /* DI-HUNT 模式：5 阀强制全关断 */
+            all_outputs_low();  /* v2.1：其余脚也全低 */
             pin_write(&kValveMaster, 0);
             pin_write(&kValveLuffUp, 0);
             pin_write(&kValveLuffDn, 0);
