@@ -352,8 +352,8 @@ int main(void)
            g_raw 由本轮 sweep_all 刚填好 */
         pin_write(&kValveMaster, (g_raw[1][9] > 2048u) ? 1 : 0);
 
-        /* (b) hunt 轮扫：每 8 秒推进一步，跳过已确认阀脚，到头回绕继续 */
-        if (ms - step_t >= 8000u) {
+        /* (b) hunt 轮扫：每 15 秒推进一步（够试多种动作），跳过已确认阀脚，到头回绕继续 */
+        if (ms - step_t >= 15000u) {
             pin_write(&kPins[step], 0);
             do {
                 step++;
