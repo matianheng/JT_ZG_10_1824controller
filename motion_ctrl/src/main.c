@@ -1,4 +1,12 @@
-/* motion_ctrl v2.4 — 鼎立 DL-IO1824G 原厂逻辑版（v2.3 + 伸臂阀接回）
+/* motion_ctrl v2.5 — 鼎立 DL-IO1824G 原厂逻辑版（v2.4 + 主卷扬接回）
+ *
+ * v2.5 相对 v2.4 的行为变化（2026-11-13 用户实车：v2.4 变幅/伸缩全对，
+ *   大勾不动——因 v2.4 卷扬阀只记录不驱动）：
+ *   主卷扬接回驱动（文件 03 字面）：J1-22 主卷起 = PB11（步17），默认
+ *   得电，主钩过卷/0x192 超时切断（超载切断仍关闭）；J1-23 主卷落 =
+ *   PB10（步16），默认得电、常通（文件 03 无切断条件）。副卷扬
+ *   J2-4/J2-5 脚未定，仍不驱动。卷扬阀是“允许”阀，实际起落由操作者
+ *   卷扬手柄（液压）控制；主控阀断开即全停。
  *
  * v2.4 相对 v2.3 的行为变化（2026-11-13 tele_hunt v2.3 upload-7.asc）：
  *   伸臂阀 J1-18 定案 = PB14（步18）。旧版 tele_hunt 跳过步18/28，伸臂
@@ -254,7 +262,7 @@
    J1-21 已接回但不参与切断）。 */
 #define QH6546_TIMEOUT_MS 500u
 
-/* ---- 已确认的阀输出（v2.4：驱动这 5 脚；卷扬阀只记录，均不驱动；
+/* ---- 已确认的阀输出（v2.5：驱动这 7 脚；副卷扬阀未定，不驱动；
       绝不碰 J1-3） ---- */
 typedef struct { uint32_t base; uint8_t pin; } Pin;
 static const Pin kValveMaster = {GPIOC_BASE, 15};  /* J1-2  主控阀  步26 PC15 */
@@ -262,8 +270,10 @@ static const Pin kValveLuffUp = {GPIOC_BASE, 13};  /* J1-4  起幅阀  步24 PC1
 static const Pin kValveLuffDn = {GPIOE_BASE, 4};   /* J1-5  落幅阀  步43 PE4（v2.2 更正） */
 static const Pin kValveTeleUp = {GPIOB_BASE, 14};  /* J1-18 伸臂阀  步18 PB14（v2.4 tele_hunt 确认） */
 static const Pin kValveTeleDn = {GPIOD_BASE, 13};  /* J1-21 缩臂阀  步36 PD13（v2.3 CAN 确认） */
-/* 已确认、只记录不驱动（本版无卷扬逻辑；记在这里是为防后人重测）：
-   J1-22 主卷起 = PB11（步17）、J1-23 主卷落 = PB10（步16）。
+static const Pin kValveWinchMainUp = {GPIOB_BASE, 11};  /* J1-22 主卷起 步17 PB11（v2.5 接回，量电压确认） */
+static const Pin kValveWinchMainDn = {GPIOB_BASE, 10};  /* J1-23 主卷落 步16 PB10（v2.5 接回，量电压确认） */
+/* 副卷扬脚未定、只记录不驱动（本版无副卷逻辑）：
+   J2-4 副卷起、J2-5 副卷落，步号待 tele_hunt 定。
    两脚在 kPins[] 表内，由 all_outputs_low() 每轮强制为 0。 */
 
 /* ---- 全部 45 个 DO 候选脚（同 diag_mimic 的 kPins；v2.1 起全部显式置低，
@@ -787,6 +797,7 @@ int main(void)
         uint8_t host_timeout = ((ms - g_host_hb_last_ms) > HOST_HB_TIMEOUT_MS) ? 1u : 0u;
         if (host_timeout) g_com_ok = 0;   /* 8 秒无主机心跳：通信故障，只报警不锁阀 */
         uint8_t cut_dn = (over_hoist || qh_timeout) ? 1u : 0u;  /* 切落幅阀与伸臂阀（文件 03）；缩臂阀不参与切断 */
+        uint8_t cut_winch_main = (g_over_hoist_main || qh_timeout) ? 1u : 0u;  /* 切主卷起阀（文件 03：主钩过卷；超时亦切，因看不见 0x192 即不知是否过卷） */
 #if OVERLOAD_CUT_ENABLE
         /* 超载切断（v1 未接：无标定压力与臂长/角度，百分比算不出；恒 0 占位） */
         uint8_t overload = 0;
@@ -805,12 +816,14 @@ int main(void)
         g_io_b4 = (uint8_t)(0x04u | (master_on ? 1u : 0u) | (telesc ? (1u << 4) : 0u));
         if (di_ready) {
             all_outputs_low();  /* v2.1：先把 45 脚全置低，再按逻辑写已确认阀；
-                                   卷扬脚不在下面出现，恒为 0 */
+                                   副卷扬脚不在下面出现，恒为 0 */
             pin_write(&kValveMaster, master_on);
             pin_write(&kValveLuffUp, !telesc);
             pin_write(&kValveLuffDn, !telesc && !cut_dn);
             pin_write(&kValveTeleUp, telesc && !cut_dn);  /* v2.4：伸臂阀 PB14 已确认，接回驱动 */
             pin_write(&kValveTeleDn, telesc);  /* v2.3：缩臂阀 PD13 已确认，接回驱动 */
+            pin_write(&kValveWinchMainUp, !cut_winch_main);  /* v2.5：主卷起默认得电，主钩过卷/超时切断 */
+            pin_write(&kValveWinchMainDn, 1);  /* v2.5：主卷落默认得电、常通（文件 03 无切断条件） */
         } else {
             /* DI-HUNT 模式：已确认阀强制全关断 */
             all_outputs_low();  /* v2.1：其余脚也全低 */
@@ -819,6 +832,8 @@ int main(void)
             pin_write(&kValveLuffDn, 0);
             pin_write(&kValveTeleUp, 0);
             pin_write(&kValveTeleDn, 0);
+            pin_write(&kValveWinchMainUp, 0);
+            pin_write(&kValveWinchMainDn, 0);
         }
 
         /* ---- NMT 心跳与 PDO ----
