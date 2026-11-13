@@ -1,4 +1,15 @@
-/* motion_ctrl v2.6 — 鼎立 DL-IO1824G 原厂逻辑版（v2.5 + 副卷扬接回）
+/* motion_ctrl v2.7 — 鼎立 DL-IO1824G 原厂逻辑版（v2.6 + 副卷扬脚更正）
+ *
+ * v2.7 相对 v2.6 的行为变化（2026-11-13 用户实车：v2.6 小勾前后没反应）：
+ *   副卷扬脚更正：J2-4 副卷起由 PB15（步11）改为 PB9（步10）、J2-5
+ *   副卷落由 PD11（步33）改为 PD7（步32）。v2.6 的 PB15/PD11 是按
+ *   报时直读定的，但用户报时比真实动作晚 7~28 秒（J1939 已证实）：
+ *   小勾卷起报 17:49:53/55，步10→11 换步在 17:49:48，报时在换步后
+ *   5~7 秒，真实动作应在换步前、即步10；小勾落下报 18:02:53/55，
+ *   步32→33 换步在 18:02:47，报时在换步后 6~8 秒，真实动作应在换步
+ *   前、即步32。v2.6 刷入后小勾前后没反应，证实 PB15/PD11 不是副卷
+ *   阀，改回延迟修正后的 PB9/PD7。若 v2.7 仍不动，再查 J2 接线与
+ *   负载电（J2-8/J2-15）。
  *
  * v2.6 相对 v2.5 的行为变化（2026-11-13 tele_hunt upload-8.asc）：
  *   副卷扬定案：J2-4 副卷起 = PB15（步11）、J2-5 副卷落 = PD11（步33）。
@@ -270,7 +281,7 @@
    J1-21 已接回但不参与切断）。 */
 #define QH6546_TIMEOUT_MS 500u
 
-/* ---- 已确认的阀输出（v2.6：驱动这 9 脚；绝不碰 J1-3） ---- */
+/* ---- 已确认的阀输出（v2.7：驱动这 9 脚；绝不碰 J1-3） ---- */
 typedef struct { uint32_t base; uint8_t pin; } Pin;
 static const Pin kValveMaster = {GPIOC_BASE, 15};  /* J1-2  主控阀  步26 PC15 */
 static const Pin kValveLuffUp = {GPIOC_BASE, 13};  /* J1-4  起幅阀  步24 PC13（v2.3 CAN 再更正） */
@@ -279,8 +290,8 @@ static const Pin kValveTeleUp = {GPIOB_BASE, 14};  /* J1-18 伸臂阀  步18 PB1
 static const Pin kValveTeleDn = {GPIOD_BASE, 13};  /* J1-21 缩臂阀  步36 PD13（v2.3 CAN 确认） */
 static const Pin kValveWinchMainUp = {GPIOB_BASE, 11};  /* J1-22 主卷起 步17 PB11（v2.5 接回，量电压确认） */
 static const Pin kValveWinchMainDn = {GPIOB_BASE, 10};  /* J1-23 主卷落 步16 PB10（v2.5 接回，量电压确认） */
-static const Pin kValveWinchAuxUp = {GPIOB_BASE, 15};  /* J2-4 副卷起 步11 PB15（v2.6 tele_hunt 确认） */
-static const Pin kValveWinchAuxDn = {GPIOD_BASE, 11};  /* J2-5 副卷落 步33 PD11（v2.6 tele_hunt 确认） */
+static const Pin kValveWinchAuxUp = {GPIOB_BASE, 9};  /* J2-4 副卷起 步10 PB9（v2.7 延迟修正；v2.6 的 PB15/步11 作废） */
+static const Pin kValveWinchAuxDn = {GPIOD_BASE, 7};  /* J2-5 副卷落 步32 PD7（v2.7 延迟修正；v2.6 的 PD11/步33 作废） */
 
 /* ---- 全部 45 个 DO 候选脚（同 diag_mimic 的 kPins；v2.1 起全部显式置低，
       只留已确认阀按逻辑驱动，杜绝未驱动脚悬空默认导通干扰） ---- */
