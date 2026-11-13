@@ -173,10 +173,26 @@ static void pin_write(const Pin *p, int on)
     BSRR(p->base) = on ? (1u << p->pin) : (1u << (p->pin + 16u));
 }
 /* 已确认的阀脚（实车验证过），hunt 时跳过不测：
-   idx17=PB14(J1-4 起幅)、idx25=PC15(J1-2 主控)、idx27=PD3(J1-5 落幅) */
+   idx15=PB10(J1-23 主卷落)、idx16=PB11(J1-22 主卷起)、
+   idx23=PC13(J1-4 起幅)、idx25=PC15(J1-2 主控)、idx35=PD13(J1-21 缩臂)、
+   idx42=PE4(J1-5 落幅)。
+   2026-11-13 更正：旧跳过表 idx17=PB14/idx27=PD3 已作废——tele_hunt
+   upload-4.asc 证明 PB14/PD3 根本不是起幅/落幅阀，两脚放回候选；
+   v2.3 再更正：idx21=PC8 不再跳过（PC8 未确认，见下），idx23=PC13
+   改为跳过（已证实是起幅阀）；PB6 也不跳过，继续当伸缩阀候选扫。 */
+/* 已确认阀脚，轮扫时跳过（idx 为 0-based 下标，步号 = idx+1）：
+ *   步16 PB10 = J1-23 主卷落、步17 PB11 = J1-22 主卷起、
+ *   步24 PC13 = J1-4 起幅、步26 PC15 = J1-2 主控（由主令直接驱动）、
+ *   步36 PD13 = J1-21 缩臂、步43 PE4 = J1-5 落幅。
+ * 2026-11-13 v2.3 更正：步22 PC8 不再跳过——PC8 未确认，它若是
+ *   J1-18 伸臂阀，跳过就永远找不到了；改跳步24（PC13 已证实是起幅阀，
+ *   伸缩测试时再轮到它只会误抬臂）与步36（PD13 已证实是缩臂阀）。
+ * 用户实测三轮日志（upload-4/5、_____0_lekv）用的旧版只跳步18/26/28，
+ * 步22/24 均已扫过。 */
 static uint8_t is_confirmed_valve(uint8_t idx)
 {
-    return (idx == 17u) || (idx == 25u) || (idx == 27u);
+    return (idx == 15u) || (idx == 16u) || (idx == 23u) ||
+           (idx == 25u) || (idx == 35u) || (idx == 42u);
 }
 /* 主控阀 J1-2（PC15，步26），hunt 时由主令开关直接驱动，不参与轮扫 */
 static const Pin kValveMaster = {GPIOC_BASE, 15};
@@ -327,8 +343,8 @@ int main(void)
     uint8_t  counter = 0;     /* 全局帧滚动计数 */
     uint32_t last_status = 0;
     uint32_t last_rawgrp = 0;
-    /* 伸缩阀 hunt 状态机：无标记闪（避免误动阀），连续轮扫，每脚 8 秒，
-       跳过已确认的 3 个阀脚；主控阀由主令开关直接驱动 */
+    /* 伸缩阀 hunt 状态机：无标记闪（避免误动阀），连续轮扫，每脚 15 秒，
+       跳过已确认的 5 个阀脚；主控阀由主令开关直接驱动 */
     uint8_t  step = 0;              /* 当前步下标 0..44 */
     uint32_t step_t = 0;
     pin_write(&kPins[0], 1);

@@ -1,21 +1,51 @@
-/* motion_ctrl v2.1 — 鼎立 DL-IO1824G 原厂逻辑版（v2 + 全输出显式置低）
+/* motion_ctrl v2.3 — 鼎立 DL-IO1824G 原厂逻辑版（v2.2 + 阀脚再更正）
  *
+ * v2.3 相对 v2.2 的行为变化（2026-11-13 复核 upload-5.asc、
+ *   _____0_lekv.asc，以 J1939 0x14020010x 臂角/臂长信号的动作起始
+ *   时刻定案，不再以用户手表报时定步号）：
+ *   1. 起幅阀脚再更正：J1-4 由 PC8（步22）改为 PC13（步24）。v2.2 的
+ *      PC8 是错的——它来自用户“9:01”报时，该报时没有秒：步22 窗口
+ *      09:00:53–09:01:16 与步24 窗口 09:01:39–09:02:02 都落在 09:01
+ *      这一分钟内，无法区分。两轮看臂动作的 CAN 证据都指向步24：
+ *      upload-5 臂角信号 10:43:01 开始爬升（步24 开始后 2 秒），
+ *      lekv 臂角信号 11:04:41 开始爬升（步24 开始后 2 秒）；而步22
+ *      期间（两轮）臂角全程平坦、手柄一直推着抬臂方向——PC8 不是
+ *      起幅阀。用户报时普遍比 CAN 真实起始晚 7~28 秒（10:43:11 实
+ *      为 10:43:01、11:05:09 实为 11:04:41），故“11:05:09 对步25
+ *      PC14”亦为看表滞后所致，PC14 同样不是起幅阀。v2.2 称“PC13
+ *      很可能就是副卷阀一类”亦错：PC13 就是起幅阀。
+ *      ⚠️ v2.2 切勿再刷：它驱动 PC8 抬臂，抬臂不会动。
+ *   2. 缩臂阀确认并接回驱动：J1-21 = PD13（步36），伸缩模式得电。
+ *      lekv 臂长信号 11:08:31 开始下降 29188→260（步36 开始后 1 秒），
+ *      即缩臂动作起始；步33（PD10）期间臂长平坦——此前聊天记录所写
+ *      “PD10（步36）”是查表数错了，PD10 是步33，步36 是 PD13。
+ *      J1-18 伸臂阀仍未定（两轮日志里臂长从未增长），伸缩模式下仍为 0。
+ *      缩臂只跟模式，不参与过卷/超时切断（缩臂减小力矩，属安全方向）。
+ *   3. 其余脚不变：J1-5 = PE4（步43，CAN 三次确认：10:49:32、
+ *      11:11:13、11:27:21 三次趴臂起始均在步43 内）；J1-22 = PB11
+ *      （步17）、J1-23 = PB10（步16），只记录、不驱动；J1-2 = PC15
+ *      （步26）。tele_hunt 跳过表同步改动见 tele_hunt/src/main_mimic.c：
+ *      跳过步16/17/24/26/43，不再跳过步22（PC8 未确认，须留在轮扫里；
+ *      它若是 J1-18，跳过就永远找不到了）。
  * v2.1 相对 v2 的唯一行为变化：45 个 DO 脚每轮先全部置低，再按逻辑写
  * 5 个阀——其余 40 脚（卷扬/配重/推杆/油冷/空调/蜂鸣器等）不再悬空，
  * 排除“未驱动脚默认导通、把先导油偷走”这一干扰。针对 2026-11-12 实车
  * 现象：伸缩模式下手柄左推走副钩卷扬、伸缩不动（2.asc），而原厂同操作
- * 伸缩正常（2-2.asc，臂长 12.88→15.86→11.39m）。若 v2.1 伸缩仍不动，
- * 则伸缩阀 GPIO 脚认定（PC13/PB6）有误，用 tele_hunt 找真脚（见
- * tele_hunt/README.md），勿再猜脚。
+ * 伸缩正常（2-2.asc，臂长 12.88→15.86→11.39m）。2026-11-13 tele_hunt
+ * 已证实错的不止伸缩脚：起幅/落幅脚也错了（见本文件头 v2.2/v2.3），
+ * PB6 自同一批旧轮扫得出、已随 v2.2 撤下；PC13 已证实是起幅阀
+ * （见 v2.3），不是副卷阀。伸臂真脚待 tele_hunt 再找。
  *
- * 一句话行为：v1.1 的 5 阀动作逻辑按文件 03 字面执行（主令只门控主控阀
- * J1-2；变幅/伸缩阀按模式常通，先导选方向；过卷 0x192 或超时切断落幅
- * 与伸臂阀；超载切断仍关闭），并增加原厂通讯骨架——NMT 状态机（0x001
+ * 一句话行为：v1.1 的动作逻辑按文件 03 字面执行（主令只门控主控阀
+ * J1-2；变幅阀按模式常通，先导选方向；过卷 0x192 或超时切断落幅阀；
+ * 超载切断仍关闭），并增加原厂通讯骨架——NMT 状态机（0x001
  * 启动、0x708 心跳、8 秒主机心跳超时只报警不锁阀）、最小 SDO 服务
  * （0x608/0x588，厂家 0x43 读 / 0x2F-0x23 写方言）、100ms PDO（0x198
  * 臂长、0x1A8 角度、0x1B8 压力、0x1F8 IO 状态、0x298 吊重、0x2A8 幅度
  * 高度、0x2D8 故障位图），使 DIS101A 屏像认原厂一样认出本固件。
  * 0x7A0/0x7A2 自研诊断帧保留，供台架对照。
+ * 例外（v2.3）：文件 03 的伸臂阀 J1-18“模式切换得电”暂不执行——真脚
+ * 未定，伸缩模式下恒为 0；缩臂阀 J1-21（PD13）已接回。过卷切断亦只切 J1-5。
  *
  * 依据（2026-11-12 采集）：
  *   文件 03《输入输出逻辑---初版》58 行（阀逻辑字面为准）；
@@ -31,8 +61,10 @@
  * 明天台架对照原厂验证：主令断开+变幅模式时 J1-4 是否 24V。
  *
  * 未做（待定，不猜）：
- *   卷扬/推杆/蜂鸣器/配重/油冷/空调输出脚步号未测（只确认 J1-2/4/5/
- *   18/21 五脚），一律不驱动；J1-7/J1-8/J1-14/J1-15/J2-12/J2-13 的
+ *   卷扬脚已确认 J1-22=PB11（步17）、J1-23=PB10（步16），本版无卷扬
+ *   逻辑、一律不驱动；推杆/蜂鸣器/配重/油冷/空调输出脚步号未测，
+ *   一律不驱动；伸臂阀 J1-18 真脚未定，本版强制为 0（缩臂阀 J1-21
+ *   = PD13 已接回）；J1-7/J1-8/J1-14/J1-15/J2-12/J2-13 的
  *   DI 格子未定位，强制/超载解除逻辑未接；臂长/角度来源 record 11/12
  *   未定（0x392/0x492 已排除），PDO 里发 0；P1/P2 压力换算用假定
  *   （250Ω 采样、PT400 量程 0~400bar、4mA 活零点），台架核对；
@@ -40,13 +72,20 @@
  *   Flash（SDO 0x1010 只应答），掉电丢失；扩展 TPDO（0x1C8/0x1D8/
  *   0x2B8/0x2C8/0x388…0x4D8）暂不发送。
  *
- * 阀脚映射（2026-11-12 实车 diag_mimic 轮扫实测，步号 = 45 脚 kPins 表
- * 1-based 索引；J1-2 由用户 2026-11-12 11:59 再确认 0x1A=26）：
- *   J1-2  主控阀   步 26 = PC15
- *   J1-4  起幅阀   步 18 = PB14
- *   J1-5  落幅阀   步 28 = PD3
- *   J1-18 伸臂阀   步 24 = PC13
- *   J1-21 缩臂阀   步 12 = PB6
+ * 阀脚映射（步号 = 45 脚 kPins 表 1-based 索引；J1-2 由用户 2026-11-12
+ * 11:59 再确认 0x1A=26；J1-4/J1-5/J1-21 由 2026-11-13 tele_hunt
+ * upload-5.asc、_____0_lekv.asc 的 J1939 动作起始时刻定案，
+ * J1-22/J1-23 由 upload-4.asc 精确到秒的报时定案，见本文件头 v2.3）：
+ *   J1-2  主控阀   步 26 = PC15（tele_hunt 跳过，未复核；v1 实车回转
+ *                     正常佐证）
+ *   J1-4  起幅阀   步 24 = PC13（2026-11-13 CAN 再更正；v2.2 的 PC8/步22
+ *                     作废，旧 PB14/步18 亦作废）
+ *   J1-5  落幅阀   步 43 = PE4（2026-11-13 更正，旧 PD3/步28 作废）
+ *   J1-22 主卷起   步 17 = PB11（2026-11-13 新确认，只记录、不驱动）
+ *   J1-23 主卷落   步 16 = PB10（2026-11-13 新确认，只记录、不驱动）
+ *   J1-18 伸臂阀   未定（待 tele_hunt；伸缩模式下恒为 0）
+ *   J1-21 缩臂阀   步 36 = PD13（2026-11-13 CAN 确认；旧 PB6/步12 作废；
+ *                     注意“PD10（步36）”是数错表，PD10 是步33）
  * 绝不驱动 J1-3（油路切换阀，本车未接线）。
  *
  * 过卷信号来源：臂头控制器 QH6546 经 CAN ID 0x192（40ms 周期）发来，
@@ -54,12 +93,14 @@
  *   ID 192 byte1 bit8 = 副钩过卷，byte1 bit7 = 主钩过卷
  *   （厂家资料以 1-based 记位，即 bit8=0x80、bit7=0x40；待实车核对）
  *   byte4 bit8 = 接近开关触发（本版只记录，暂不参与切断）。
- * 超时判故障：>500ms 未收到 ID 192 即视为故障态，同样切断 J1-5/J1-18，
- * 绝不把“收不到”等同于“未过卷”。上电后收到第一帧 192 之前即为超时态。
+ * 超时判故障：>500ms 未收到 ID 192 即视为故障态，同样切断 J1-5
+ * （v2.2 起伸缩阀不驱动，切断范围只剩落幅阀；v2.3 缩臂阀已接回但不
+ * 参与切断）。上电后收到第一帧 192 之前即为超时态。
  *
  * 逻辑依据：厂家《输入输出逻辑---初版》文件 03（已与电气原理图核对）。
  * 与文件 04 的分歧（待用户定夺，见 README）：04 要求过卷只切对应钩的
- * 起钩阀、超载禁缩臂；本版按 03 执行（过卷切 J1-5+J1-18，超载不切缩臂）。
+ * 起钩阀、超载禁缩臂；本版按 03 执行，但伸缩阀未定故过卷只切 J1-5
+ * （J1-18 待真脚定后再接回切断范围），超载不切缩臂。
  *
  * 基础设施复用 freq_demo（已台架验证）：寄存器定义、clock_force_hsi16()、
  * adc_init()/adc_read()、can_init_250k()、can_send()、Bus-Off 自恢复、
@@ -168,7 +209,7 @@
 /* ================= 待填：DI 输入通道（实车 DI-HUNT 定位后填入） ================
  * 含义：该开关在 0x7A2 全矩阵中的位置。(slot, ch) —— slot = 多路复用槽号
  * 0..7，ch = kChans 索引 0..11。-1 = 未确认；任一为 -1 即进入 DI-HUNT
- * 模式（5 个阀输出强制断开，只发诊断帧）。填入两个数后即为动作程序。
+ * 模式（已确认阀输出强制断开，只发诊断帧）。填入两个数后即为动作程序。
  * DI_MODE_INVERT：若实测 J1-10 高电平对应变幅（与假设相反），改成 1。 */
 #define DI_MASTER_SLOT  (1)     /* J1-6 主令开关：槽号，2026-11-12 实测（J1-6-2.asc，24V 持续接 8~96s） */
 #define DI_MASTER_CH    (9)     /* J1-6 主令开关：kChans 索引 9=PC2（ADC2 IN12），通 24V 时 4095、断开时 7；同格 ch1（PA6）同步 3007，可作印证 */
@@ -202,19 +243,25 @@
  * 力矩百分比算不出来；现在打开只会误切。待标定完成后再置 1。 */
 #define OVERLOAD_CUT_ENABLE 0
 
-/* ID 192 超时门限：>500ms 未收到即判通信故障（切断 J1-5/J1-18）。 */
+/* ID 192 超时门限：>500ms 未收到即判通信故障（切断 J1-5；v2.3 起
+   J1-18 未确认、不驱动，不在切断范围内；J1-21 已接回但不参与切断）。 */
 #define QH6546_TIMEOUT_MS 500u
 
-/* ---- 5 个阀输出（实车轮扫定案，只驱动这 5 脚；绝不碰 J1-3） ---- */
+/* ---- 已确认的阀输出（v2.3：只驱动这 4 脚；伸臂阀未定、卷扬阀只记录，
+      均不驱动；绝不碰 J1-3） ---- */
 typedef struct { uint32_t base; uint8_t pin; } Pin;
 static const Pin kValveMaster = {GPIOC_BASE, 15};  /* J1-2  主控阀  步26 PC15 */
-static const Pin kValveLuffUp = {GPIOB_BASE, 14};  /* J1-4  起幅阀  步18 PB14 */
-static const Pin kValveLuffDn = {GPIOD_BASE, 3};   /* J1-5  落幅阀  步28 PD3  */
-static const Pin kValveTeleEx = {GPIOC_BASE, 13};  /* J1-18 伸臂阀  步24 PC13 */
-static const Pin kValveTeleRe = {GPIOB_BASE, 6};   /* J1-21 缩臂阀  步12 PB6  */
+static const Pin kValveLuffUp = {GPIOC_BASE, 13};  /* J1-4  起幅阀  步24 PC13（v2.3 CAN 再更正） */
+static const Pin kValveLuffDn = {GPIOE_BASE, 4};   /* J1-5  落幅阀  步43 PE4（v2.2 更正） */
+static const Pin kValveTeleDn = {GPIOD_BASE, 13};  /* J1-21 缩臂阀  步36 PD13（v2.3 CAN 确认） */
+/* 已确认、只记录不驱动（本版无卷扬逻辑；记在这里是为防后人重测）：
+   J1-22 主卷起 = PB11（步17）、J1-23 主卷落 = PB10（步16）。
+   两脚在 kPins[] 表内，由 all_outputs_low() 每轮强制为 0。 */
+/* J1-18 伸臂阀真脚未定：此处故意不定常量——伸缩模式下由
+   all_outputs_low() 强制为 0，直到 tele_hunt 找出真脚再接线。 */
 
 /* ---- 全部 45 个 DO 候选脚（同 diag_mimic 的 kPins；v2.1 起全部显式置低，
-      只留 5 个阀按逻辑驱动，杜绝未驱动脚悬空默认导通干扰） ---- */
+      只留已确认阀按逻辑驱动，杜绝未驱动脚悬空默认导通干扰） ---- */
 static const Pin kPins[] = {
     /*  1- 8 */ {GPIOA_BASE,0},{GPIOA_BASE,1},{GPIOA_BASE,2},{GPIOA_BASE,3},
                 {GPIOA_BASE,8},{GPIOA_BASE,9},{GPIOA_BASE,10},{GPIOA_BASE,11},
@@ -323,7 +370,7 @@ static void pin_write(const Pin *p, int on)
 {
     BSRR(p->base) = on ? (1u << p->pin) : (1u << (p->pin + 16u));
 }
-/* 全部 DO 脚置低（5 个阀随后按逻辑重写，其余 40 脚保持低电平） */
+/* 全部 DO 脚置低（已确认阀随后按逻辑重写，其余脚保持低电平） */
 static void all_outputs_low(void)
 {
     for (unsigned i = 0; i < PIN_COUNT; i++) pin_write(&kPins[i], 0);
@@ -630,8 +677,9 @@ static uint16_t di_read(int slot, int ch_idx)
 }
 
 /* ================= 动作主程序 =================
-   DI 未确认时为 DI-HUNT 模式：5 阀全关断，只发诊断帧；
-   DI 填入后为动作模式：主令/模式/过卷逻辑驱动 5 阀。 */
+   DI 未确认时为 DI-HUNT 模式：已确认阀全关断，只发诊断帧；
+   DI 填入后为动作模式：主令/模式/过卷逻辑驱动 3 个已确认阀
+   （伸缩阀未定、卷扬阀无逻辑，两组脚恒为 0）。 */
 int main(void)
 {
     clock_force_hsi16();
@@ -642,12 +690,11 @@ int main(void)
     STK_VAL = 0;
     STK_CTRL = (1u << 2) | 1u;
 
-    /* 5 个阀脚推挽输出，初始全关断（安全默认） */
+    /* 已确认的 3 个阀脚推挽输出，初始全关断（安全默认）；伸缩/卷扬脚
+       不单配输出，由下面的 all_outputs_low() 循环统一置低 */
     gpio_output(kValveMaster.base, kValveMaster.pin); pin_write(&kValveMaster, 0);
     gpio_output(kValveLuffUp.base, kValveLuffUp.pin); pin_write(&kValveLuffUp, 0);
     gpio_output(kValveLuffDn.base, kValveLuffDn.pin); pin_write(&kValveLuffDn, 0);
-    gpio_output(kValveTeleEx.base, kValveTeleEx.pin); pin_write(&kValveTeleEx, 0);
-    gpio_output(kValveTeleRe.base, kValveTeleRe.pin); pin_write(&kValveTeleRe, 0);
     /* v2.1：其余 40 个 DO 脚也配成输出并置低（不悬空），随后每轮重申 */
     for (unsigned i = 0; i < PIN_COUNT; i++) {
         gpio_output(kPins[i].base, kPins[i].pin);
@@ -733,11 +780,11 @@ int main(void)
         uint8_t qh_timeout = ((ms - g_qh6546_last_ms) > QH6546_TIMEOUT_MS) ? 1u : 0u;
         uint8_t host_timeout = ((ms - g_host_hb_last_ms) > HOST_HB_TIMEOUT_MS) ? 1u : 0u;
         if (host_timeout) g_com_ok = 0;   /* 8 秒无主机心跳：通信故障，只报警不锁阀 */
-        uint8_t cut_dn_ex = (over_hoist || qh_timeout) ? 1u : 0u;  /* 切落幅阀+伸臂阀 */
+        uint8_t cut_dn = (over_hoist || qh_timeout) ? 1u : 0u;  /* 切落幅阀（v2.3：伸臂阀 J1-18 未定、不驱动；缩臂阀不参与切断） */
 #if OVERLOAD_CUT_ENABLE
         /* 超载切断（v1 未接：无标定压力与臂长/角度，百分比算不出；恒 0 占位） */
         uint8_t overload = 0;
-        if (overload) cut_dn_ex = 1u;
+        if (overload) cut_dn = 1u;
 #endif
         /* 0x2D8 故障位图（P1/P2 断线只在首次采样后判断，避免上电误报） */
         g_fault = 0;
@@ -751,20 +798,20 @@ int main(void)
         g_io_b0 = (uint8_t)(0x80u | (master_on ? 1u : 0u));
         g_io_b4 = (uint8_t)(0x04u | (master_on ? 1u : 0u) | (telesc ? (1u << 4) : 0u));
         if (di_ready) {
-            all_outputs_low();  /* v2.1：先把 45 脚全置低，再按逻辑写 5 个阀 */
+            all_outputs_low();  /* v2.1：先把 45 脚全置低，再按逻辑写已确认阀；
+                                   伸臂/卷扬脚不在下面出现，恒为 0 */
             pin_write(&kValveMaster, master_on);
             pin_write(&kValveLuffUp, !telesc);
-            pin_write(&kValveLuffDn, !telesc && !cut_dn_ex);
-            pin_write(&kValveTeleEx, telesc && !cut_dn_ex);
-            pin_write(&kValveTeleRe, telesc);
+            pin_write(&kValveLuffDn, !telesc && !cut_dn);
+            pin_write(&kValveTeleDn, telesc);  /* v2.3：缩臂阀 PD13 已确认，接回驱动 */
+            /* v2.3：伸缩模式下仍不写 J1-18——伸臂真脚未定。 */
         } else {
-            /* DI-HUNT 模式：5 阀强制全关断 */
+            /* DI-HUNT 模式：已确认阀强制全关断 */
             all_outputs_low();  /* v2.1：其余脚也全低 */
             pin_write(&kValveMaster, 0);
             pin_write(&kValveLuffUp, 0);
             pin_write(&kValveLuffDn, 0);
-            pin_write(&kValveTeleEx, 0);
-            pin_write(&kValveTeleRe, 0);
+            pin_write(&kValveTeleDn, 0);
         }
 
         /* ---- NMT 心跳与 PDO ----
