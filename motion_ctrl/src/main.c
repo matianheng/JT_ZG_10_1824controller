@@ -1,4 +1,20 @@
-/* motion_ctrl v2.7 — 鼎立 DL-IO1824G 原厂逻辑版（v2.6 + 副卷扬脚更正）
+/* motion_ctrl v2.8 — 鼎立 DL-IO1824G 原厂逻辑版（v2.7 + 副卷扬脚再更正）
+ *
+ * v2.8 相对 v2.7 的唯一行为变化（2026-11-13 晚，复核 upload-8.asc 的 0x7A3 步号帧）：
+ *   副卷扬脚再更正：J2-4 副卷起由 PB9 改为 PB5（步11）、J2-5 副卷落由 PD7
+ *   改为 PD10（步33）。v2.6/v2.7 的步号→GPIO 换算错了——按 kPins 表逐项数，
+ *   步10=PB4、步11=PB5、步32=PD7、步33=PD10（步15=PB9、步19=PB15、
+ *   步34=PD11）。v2.6 驱动的 PB15/PD11 是步19/步34，v2.7 驱动的 PB9 是
+ *   步15，三者都从未在小勾动作窗口内出现过，所以两版小勾都不动是必然的，
+ *   不是接线问题。步号窗口本身没错（upload-8.asc 实测：步11 为
+ *   17:49:47–17:50:10，报时 17:49:53/55 落在其内；步33 为 18:02:46–
+ *   18:03:09，报时 18:02:53/55 落在其内），错的只是步号查 GPIO 的那一步
+ *   ——与今天早些时候“PD10（步36）”数错成 PD13 是同一类错误。
+ *   本版按报时直读定案（PB5/PD10）；若 v2.8 起动、落不动，则落为 PD7
+ *   （步32，延迟修正候选）；若落动、起不动，则起为 PB4（步10）。
+ *   若两向都不动，先量 J2-4/J2-5 对地电压再定下一步（见 README）。
+ *   其余 7 阀与逻辑不变；v2.6/v2.7 切勿再刷。
+ *
  *
  * v2.7 相对 v2.6 的行为变化（2026-11-13 用户实车：v2.6 小勾前后没反应）：
  *   副卷扬脚更正：J2-4 副卷起由 PB15（步11）改为 PB9（步10）、J2-5
@@ -290,8 +306,8 @@ static const Pin kValveTeleUp = {GPIOB_BASE, 14};  /* J1-18 伸臂阀  步18 PB1
 static const Pin kValveTeleDn = {GPIOD_BASE, 13};  /* J1-21 缩臂阀  步36 PD13（v2.3 CAN 确认） */
 static const Pin kValveWinchMainUp = {GPIOB_BASE, 11};  /* J1-22 主卷起 步17 PB11（v2.5 接回，量电压确认） */
 static const Pin kValveWinchMainDn = {GPIOB_BASE, 10};  /* J1-23 主卷落 步16 PB10（v2.5 接回，量电压确认） */
-static const Pin kValveWinchAuxUp = {GPIOB_BASE, 9};  /* J2-4 副卷起 步10 PB9（v2.7 延迟修正；v2.6 的 PB15/步11 作废） */
-static const Pin kValveWinchAuxDn = {GPIOD_BASE, 7};  /* J2-5 副卷落 步32 PD7（v2.7 延迟修正；v2.6 的 PD11/步33 作废） */
+static const Pin kValveWinchAuxUp = {GPIOB_BASE, 5};  /* J2-4 副卷起 步11 PB5（v2.8 按 kPins 表重数：步10=PB4、步11=PB5；v2.7 的 PB9=步15、v2.6 的 PB15=步19，作废） */
+static const Pin kValveWinchAuxDn = {GPIOD_BASE, 10}; /* J2-5 副卷落 步33 PD10（v2.8 按 kPins 表重数：步32=PD7、步33=PD10；v2.7 的 PD7=步32 为延迟修正候选、v2.6 的 PD11=步34，作废） */
 
 /* ---- 全部 45 个 DO 候选脚（同 diag_mimic 的 kPins；v2.1 起全部显式置低，
       只留已确认阀按逻辑驱动，杜绝未驱动脚悬空默认导通干扰） ---- */
