@@ -1,4 +1,11 @@
-/* motion_ctrl v2.10 — 鼎立 DL-IO1824G 原厂逻辑版（v2.9 + 0x192 字节下标修正）
+/* motion_ctrl v2.11 — 鼎立 DL-IO1824G 原厂逻辑版（v2.10 回退到 v2.8 的 0x192 处理）
+ *
+ * v2.11 相对 v2.10 的唯一行为变化（2026-11-14 用户实车：v2.9/v2.10 动作丢失）：
+ *   0x192 过卷处理回退到 v2.8：b1 改回 d[0]、位掩码改回 0x80/0x40。
+ *   v2.9/v2.10 的 0x192 改动（位掩码 0x01/0x02、字节 d[1]）导致动作
+ *   丢失，先全部回退恢复动作；过卷切断暂不启用（与 v2.8 相同：d[0]
+ *   恒 0x02，0x80/0x40 位恒为 0，切断永不触发）。0x192 的正确解码
+ *   待离线重新核对后再单独验证，不再与动作混在一起改。
  *
  * v2.10 相对 v2.9 的唯一行为变化（2026-11-14 用户实车：v2.9 大勾不能升）：
  *   0x192 过卷字节下标更正：由 d[0] 改为 d[1]。v2.9 只改了位掩码
@@ -703,11 +710,11 @@ static void can_poll_rx(uint32_t now_ms)
         if (id == ID_HOST_HB) { g_host_hb_last_ms = now_ms; g_com_ok = 1; continue; }
         if (id == ID_SDO_RX) { sdo_handle(d); continue; }
         if (id == ID_QH6546) {
-            uint8_t b1 = d[1];  /* 过卷字节 = data[1]（.asc 第2字节）：平时 0x00、副钩过卷 0x01、主钩过卷 0x02；v2.9 误读 d[0]（恒 0x02）导致主钩常切断 */
+            uint8_t b1 = d[0];  /* v2.11 回退到 v2.8：过卷切断暂不启用（v2.9/v2.10 的 0x192 改动导致动作丢失，先恢复动作） */
             uint8_t b4 = d[3];  /* byte4（1-based）= data[3] */
             /* 厂家资料 1-based 记位：bit8=0x80、bit7=0x40；待实车核对 */
-            g_over_hoist_aux  = (b1 & (1u << 0)) != 0;  /* byte1 bit0（0x01）副钩过卷，upload-10.asc 实测；手册 bit8=0x80 是错的 */
-            g_over_hoist_main = (b1 & (1u << 1)) != 0;  /* byte1 bit1（0x02）主钩过卷，upload-10.asc 实测；手册 bit7=0x40 是错的 */
+            g_over_hoist_aux  = (b1 & (1u << 7)) != 0;  /* v2.11 回退：按 v2.8（手册 bit8），切断暂不触发，先恢复动作 */
+            g_over_hoist_main = (b1 & (1u << 6)) != 0;  /* v2.11 回退：按 v2.8（手册 bit7），切断暂不触发，先恢复动作 */
             g_proximity       = (b4 & (1u << 7)) != 0;  /* byte4 bit8 接近开关 */
             g_qh6546_last_ms  = now_ms;
         }
