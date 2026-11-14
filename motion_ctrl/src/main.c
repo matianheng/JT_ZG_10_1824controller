@@ -1,4 +1,11 @@
-/* motion_ctrl v2.8 — 鼎立 DL-IO1824G 原厂逻辑版（v2.7 + 副卷扬脚再更正）
+/* motion_ctrl v2.9 — 鼎立 DL-IO1824G 原厂逻辑版（v2.8 + 0x192 过卷位修正）
+ *
+ * v2.9 相对 v2.8 的唯一行为变化（2026-11-14 upload-10.asc 实测）：
+ *   0x192 byte1 过卷位更正：副钩过卷 = bit0（0x01）、主钩过卷 = bit1
+ *   （0x02）。厂家手册称 bit8（0x80）=副钩、bit7（0x40）=主钩，是错
+ *   的——实测小勾顶限位器时 byte1=0x01、大勾顶限位器时 byte1=0x02。
+ *   v2.8 及之前按手册查 0x80/0x40，过卷切断永不触发（安全隐患），
+ *   本版改查 0x01/0x02。接近开关仍按手册 byte4 bit8（0x80），未实测。
  *
  * v2.8 相对 v2.7 的唯一行为变化（2026-11-13 晚，复核 upload-8.asc 的 0x7A3 步号帧）：
  *   副卷扬脚再更正：J2-4 副卷起由 PB9 改为 PB5（步11）、J2-5 副卷落由 PD7
@@ -140,8 +147,10 @@
  *
  * 过卷信号来源：臂头控制器 QH6546 经 CAN ID 0x192（40ms 周期）发来，
  * 本车 J2-1/J2-2/J1-11 均为空脚，过卷与接近开关不走模块 DI。
- *   ID 192 byte1 bit8 = 副钩过卷，byte1 bit7 = 主钩过卷
- *   （厂家资料以 1-based 记位，即 bit8=0x80、bit7=0x40；待实车核对）
+ *   ID 192 byte1 bit1（0x02）= 主钩过卷，byte1 bit0（0x01）= 副钩过卷
+ *   （upload-10.asc 2026-11-14 实测：小勾顶限位器 byte1=0x01、大勾顶
+ *   限位器 byte1=0x02；厂家手册称 bit8/bit7 是错的，v2.8 及之前按手册
+ *   查 0x80/0x40 导致切断永不触发，v2.9 改查 0x01/0x02）
  *   byte4 bit8 = 接近开关触发（本版只记录，暂不参与切断）。
  * 超时判故障：>500ms 未收到 ID 192 即视为故障态，同样切断 J1-5 与 J1-18
  * （v2.4 起伸臂阀已接回，切断范围为落幅阀+伸臂阀；缩臂阀不参与切断）。
@@ -342,8 +351,8 @@ static const AdcChan kChans[] = {
 #define NCH (sizeof(kChans) / sizeof(kChans[0]))
 
 /* ---- 运行态（ID 192 解码结果） ---- */
-static uint8_t g_over_hoist_main = 0;  /* 主钩过卷（ID 192 byte1 bit7，待核对） */
-static uint8_t g_over_hoist_aux = 0;   /* 副钩过卷（ID 192 byte1 bit8，待核对） */
+static uint8_t g_over_hoist_main = 0;  /* 主钩过卷（ID 192 byte1 bit1=0x02，upload-10.asc 2026-11-14 实测） */
+static uint8_t g_over_hoist_aux = 0;   /* 副钩过卷（ID 192 byte1 bit0=0x01，upload-10.asc 2026-11-14 实测） */
 static uint8_t g_proximity = 0;        /* 接近开关（ID 192 byte4 bit8，v1 只记录） */
 static uint32_t g_qh6546_last_ms = 0;  /* 上次收到 ID 192 的 ms 时刻（初值 0=超时态） */
 static uint16_t g_raw[8][NCH];         /* 全部 8 槽 × 12 路原始值矩阵（供 0x7A2 轮发） */
@@ -689,8 +698,8 @@ static void can_poll_rx(uint32_t now_ms)
             uint8_t b1 = d[0];
             uint8_t b4 = d[3];  /* byte4（1-based）= data[3] */
             /* 厂家资料 1-based 记位：bit8=0x80、bit7=0x40；待实车核对 */
-            g_over_hoist_aux  = (b1 & (1u << 7)) != 0;  /* byte1 bit8 副钩过卷 */
-            g_over_hoist_main = (b1 & (1u << 6)) != 0;  /* byte1 bit7 主钩过卷 */
+            g_over_hoist_aux  = (b1 & (1u << 0)) != 0;  /* byte1 bit0（0x01）副钩过卷，upload-10.asc 实测；手册 bit8=0x80 是错的 */
+            g_over_hoist_main = (b1 & (1u << 1)) != 0;  /* byte1 bit1（0x02）主钩过卷，upload-10.asc 实测；手册 bit7=0x40 是错的 */
             g_proximity       = (b4 & (1u << 7)) != 0;  /* byte4 bit8 接近开关 */
             g_qh6546_last_ms  = now_ms;
         }
