@@ -1,4 +1,12 @@
-/* motion_ctrl v2.9 — 鼎立 DL-IO1824G 原厂逻辑版（v2.8 + 0x192 过卷位修正）
+/* motion_ctrl v2.10 — 鼎立 DL-IO1824G 原厂逻辑版（v2.9 + 0x192 字节下标修正）
+ *
+ * v2.10 相对 v2.9 的唯一行为变化（2026-11-14 用户实车：v2.9 大勾不能升）：
+ *   0x192 过卷字节下标更正：由 d[0] 改为 d[1]。v2.9 只改了位掩码
+ *   （0x80/0x40→0x01/0x02）却没改字节下标——代码一直读 d[0]，而
+ *   d[0] 恒为 0x02（.asc 第1字节），(0x02 & 0x02)≠0 使主钩过卷恒为
+ *   真，主卷起阀被常切断，大勾升不起来；副钩 (0x02 & 0x01)=0 则永
+ *   不切断。真正变的字节是 d[1]（.asc 第2字节）：平时 0x00、副钩
+ *   0x01、主钩 0x02（upload-10.asc 实测）。本版改读 d[1]。
  *
  * v2.9 相对 v2.8 的唯一行为变化（2026-11-14 upload-10.asc 实测）：
  *   0x192 byte1 过卷位更正：副钩过卷 = bit0（0x01）、主钩过卷 = bit1
@@ -695,7 +703,7 @@ static void can_poll_rx(uint32_t now_ms)
         if (id == ID_HOST_HB) { g_host_hb_last_ms = now_ms; g_com_ok = 1; continue; }
         if (id == ID_SDO_RX) { sdo_handle(d); continue; }
         if (id == ID_QH6546) {
-            uint8_t b1 = d[0];
+            uint8_t b1 = d[1];  /* 过卷字节 = data[1]（.asc 第2字节）：平时 0x00、副钩过卷 0x01、主钩过卷 0x02；v2.9 误读 d[0]（恒 0x02）导致主钩常切断 */
             uint8_t b4 = d[3];  /* byte4（1-based）= data[3] */
             /* 厂家资料 1-based 记位：bit8=0x80、bit7=0x40；待实车核对 */
             g_over_hoist_aux  = (b1 & (1u << 0)) != 0;  /* byte1 bit0（0x01）副钩过卷，upload-10.asc 实测；手册 bit8=0x80 是错的 */
